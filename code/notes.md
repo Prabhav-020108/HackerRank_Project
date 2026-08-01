@@ -15,13 +15,22 @@
 
 ## Edge Cases to Defend Against
 *   **Missing FKs in Messages**: `group_id` (47 nulls), `business_id` (80 nulls), `message_text` (8 nulls), `media_type`/`media_id` (87 nulls).
-*   **Missing Media Files**: 20 images and 13 voice notes have entries but lack actual files in `dataset/media/...`.
+*   **Missing Media Files**: All 20 images and 13 voice notes listed in CSVs actually exist on disk. No missing files.
 *   **Missing Values in other tables**: `user_business_history.csv` has 92 null `promotions_opted_out_at` and 42 null `last_reply_at`. `message_events.csv` has 134 null `reaction_time_minutes`.
 
 ## Specific Checks
-*   **@-Mentions**: `users.csv` does NOT contain a display name. Thus, direct mentions must be derived by looking for `@<user_id>` in the `message_text`.
-*   **Media Extensions**: Images use `.jpg` (mime_type: `image/jpeg`). Voice notes use `.mp3` (mime_type: `audio/mp3`). 
+*   **@-Mentions**: `users.csv` does NOT contain a display name. Direct mentions use the pattern `@u_XXX` where the ID matches `user_id` exactly. Found 5 such messages in `messages.csv`.
+*   **Media Extensions**: Images use `.jpg` (mime_type: `image/jpeg`). Voice notes use `.mp3` (mime_type: `audio/mpeg`). 
 *   **sample_messages.csv Tone**: 
     *   Reasons are ~82 characters on average (concise, specific).
-    *   `evidence_message_ids` are always a single ID (or `"none"`).
+    *   `evidence_message_ids` are usually a single ID, sometimes semicolon-separated (e.g. `message_0013;message_0014`), or `"none"`.
     *   `confidence` values are decisive, typically distributed between 0.77 and 0.91 (never exactly 0.5).
+
+## Phase 3 — Context Hydration Notes
+*   **DND Window Format**: `"HH:MM-HH:MM"` (e.g. `"22:00-07:00"`). Most span midnight.
+*   **DND Detection**: 8 out of 110 messages fall within their user's DND window.
+*   **@Mention Detection**: 5 out of 110 messages contain a direct `@user_id` mention of the recipient.
+*   **Notification Load Fallback**: Daily summary covers `2026-07-04` to `2026-07-17`, messages are from `2026-07-20+`. Context module falls back to the user's most recent available date as a proxy.
+*   **Conversation Type Split**: 63 group, 30 business, 17 personal.
+*   **Media Split**: 87 text-only, 15 image, 8 voice.
+*   **All 110 rows hydrate without errors across all conversation types.**
