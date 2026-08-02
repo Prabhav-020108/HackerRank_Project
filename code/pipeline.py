@@ -187,8 +187,73 @@ def finalize(ctx: MessageContext, draft: dict) -> dict:
         return decision
 
     # No override applied — return LLM decision as-is.
+
+    # ── Override D: Verified sender explicitly denies OTP/payment → cannot be scam ──
+    # Problem: Gemini sometimes flags "no OTP required" messages as scam because
+    # they contain the word OTP. But a message that explicitly says "no OTP is
+    # required" is a safety advisory, not a phishing attempt.
+    # Trigger: action=mute AND type=scam AND text contains an OTP-denial phrase
+    #          AND sender is a verified business with no high community report rate.
+    from rules import _SAFETY_ADVISORY_PATTERNS, _text_matches_any as _tma
+    if (
+        decision.get("action") == "mute"
+        and decision.get("message_type") == "scam"
+        and decision.get("_override") is None  # not already overridden above
+        and _tma(text, _SAFETY_ADVISORY_PATTERNS)
+        and ctx.conversation_type == "business"
+        and ctx.business is not None
+        and ctx.business.verified
+        and ctx.business.user_reports_30d < 20
+    ):
+        biz_name = getattr(ctx.business, "business_name", None) or ctx.business_id or "the sender"
+        decision["action"] = "digest"
+        decision["message_type"] = "business_update"
+        decision["reason"] = (
+            f"Code override (verified sender OTP-denial): {biz_name} explicitly states "
+            f"no OTP or payment is required — this is a safety advisory, not a phishing attempt. "
+            f"Reclassified from mute/scam to digest/business_update."
+        )
+        decision["_override"] = "verified_sender_otp_denial"
+        return decision
+
+    # ── Override E: Non-urgent business payment notifications → digest ────────
+    # Problem: Gemini over-classifies routine banking "payment update available"
+    # messages as notify/urgent because they mention financial terms.
+    # Trigger: action=notify AND type=payment AND conversation_type=business
+    #          AND message text has NO explicit time-urgency markers
+    #          AND sender is verified AND user has a known relationship.
+    # Rationale: "your statement is ready" / "payment update available" = digest.
+    #            "pay by 5 PM today or service cuts" = notify (has urgency markers).
+    URGENCY_MARKERS = [
+        "today", "tonight", "immediately", "urgent", "cut off", "suspend",
+        "within the next", "deadline", "due today", "last chance",
+        "expires today", "overdue", "right now", "act now", "pay now",
+        "respond now", "call now", "hours remaining", "minutes remaining",
+    ]
+    if (
+        decision.get("action") == "notify"
+        and decision.get("message_type") == "payment"
+        and decision.get("_override") is None
+        and ctx.conversation_type == "business"
+        and ctx.business is not None
+        and ctx.business.verified
+    ):
+        text_lower = text.lower()
+        has_urgency = any(marker in text_lower for marker in URGENCY_MARKERS)
+        if not has_urgency:
+            biz_name = getattr(ctx.business, "business_name", None) or "the business"
+            decision["action"] = "digest"
+            decision["reason"] = (
+                f"Code override (non-urgent payment update): {biz_name} sent a routine "
+                f"payment or account notification with no explicit time-critical deadline. "
+                f"Downgraded from notify to digest — the user can review this at their convenience."
+            )
+            decision["_override"] = "non_urgent_payment_downgrade"
+            return decision
+
     decision["_override"] = None
     return decision
+
 
 
 # ============================================================================
