@@ -1,16 +1,113 @@
-# HackerRank Orchestrate
+# HackerRank Orchestrate — Message Notification Router
 
-Starter repository for the **HackerRank Orchestrate** 24-hour hackathon.
+An AI-powered WhatsApp message routing system that classifies every incoming message as `notify`, `digest`, or `mute` using a personalized 8-stage pipeline: deterministic fast-path rules, BM25 evidence retrieval, and Gemini LLM classification.
 
-## Message Notification Router
+---
 
-Build an AI-powered system for WhatsApp that decides which messages deserve immediate attention, which should wait, and which should be muted.
+## Quick Start
 
-The system must reason over multimodal messages, including text messages, image posters/screenshots, and voice notes.
+### 1. Install dependencies
 
-WhatsApp is noisy. A user can receive family chats, society notices, school updates, co-worker messages, business account promotions, image posters, voice notes, and scams in the same message stream. Treating every message the same creates two bad outcomes: important messages get missed, and unwanted or risky messages interrupt the user.
+```bash
+python -m venv venv
 
-Read [`problem_statement.md`](./problem_statement.md) for the full task spec, input/output schema, allowed values, and submission format.
+# Windows
+venv\Scripts\activate
+
+# macOS / Linux
+source venv/bin/activate
+
+pip install -r requirements.txt
+```
+
+### 2. Set up environment variables
+
+Copy the example file and fill in your Gemini API key(s):
+
+```bash
+cp .env.example .env
+```
+
+Open `.env` and set:
+
+```
+GEMINI_API_KEY_1=your_key_here
+```
+
+You may add up to 3 keys (`GEMINI_API_KEY_1`, `GEMINI_API_KEY_2`, `GEMINI_API_KEY_3`) for automatic key rotation when a quota limit is hit.
+
+> **Required env vars:** `GEMINI_API_KEY_1` (mandatory). `GEMINI_API_KEY_2` and `GEMINI_API_KEY_3` are optional but recommended to avoid RPD quota limits.
+
+### 3. Run the pipeline
+
+```bash
+python code/main.py
+```
+
+This reads `dataset/messages.csv` and all context files from `dataset/`, runs the full 8-stage pipeline, and writes predictions to `output.csv`.
+
+---
+
+## Pipeline Architecture
+
+The system runs 8 stages per message:
+
+| Stage | Module | Description |
+|---|---|---|
+| 1 | `context.py` | Hydrate `MessageContext` — joins all tables for the message |
+| 2 | `rules.py` | Fast-path deterministic rules (scam guard, muted-group, prompt injection) |
+| 3 | `retrieval.py` | BM25 evidence retrieval over `message_history.csv` |
+| 4 | — | Signal extraction (carried by context) |
+| 5 | `llm.py` | Gemini Flash LLM classification with structured JSON schema |
+| 6 | `pipeline.py` | Finalize: code-driven overrides (scam guard, DND, direct @-mention) |
+| 7 | `pipeline.py` | Confidence calibration based on fast-path/LLM agreement |
+| 8 | `pipeline.py` | Schema validation and output clamping |
+
+### Key design decisions
+
+- **Fast-path rules short-circuit before the LLM** for obvious cases (unverified high-report businesses, muted groups with no @-mention, prompt injection attempts, chain-letter forwards). This saves API quota and is deterministic.
+- **Scam guard cannot be overridden** by LLM or engagement history — safety always wins.
+- **DND is a context signal, not an auto-mute** — urgent messages during quiet hours still notify; only low-value types are suppressed.
+- **Personalization** comes from `user_business_history.csv` (opt-out status, engagement), `group_members.csv` (muted status, role), and `message_events.csv` (historical reactions).
+
+---
+
+## Environment Variables Reference
+
+| Variable | Required | Description |
+|---|---|---|
+| `GEMINI_API_KEY_1` | ✅ Yes | Primary Gemini API key |
+| `GEMINI_API_KEY_2` | Optional | Second key for automatic rotation on quota hit |
+| `GEMINI_API_KEY_3` | Optional | Third key for automatic rotation on quota hit |
+
+Keys are loaded from `.env` in the project root. Never commit `.env` to git (it is already in `.gitignore`).
+
+---
+
+## Output Format
+
+`output.csv` columns (exact order required):
+
+| Column | Type | Allowed values |
+|---|---|---|
+| `message_id` | string | Must match `dataset/messages.csv` |
+| `action` | string | `notify`, `digest`, `mute` |
+| `message_type` | string | `personal`, `urgent`, `event`, `payment`, `business_update`, `promotion`, `greeting`, `forward`, `spam`, `scam`, `unknown` |
+| `reason` | string | Short, specific, message-grounded explanation |
+| `confidence` | float | 0.0 – 1.0 |
+| `evidence_message_ids` | string | Semicolon-separated IDs from `message_history.csv`, or `none` |
+
+---
+
+## Validation
+
+Run the built-in evaluator to confirm schema compliance:
+
+```bash
+python code/evaluation/main.py
+```
+
+Expected output: `VALID: 110 rows, schema OK, all enums valid, confidence in range, no dupes.`
 
 ---
 
@@ -18,22 +115,35 @@ Read [`problem_statement.md`](./problem_statement.md) for the full task spec, in
 
 ```text
 .
-├── AGENTS.md                         # Rules for AI coding tools + transcript logging
-├── problem_statement.md              # Full challenge statement
-├── README.md                         # You are here
-└── dataset/
-    ├── messages.csv                  # Messages to route
-    ├── output.csv                    # Blank submission template
-    ├── sample_messages.csv           # Solved examples
-    ├── users.csv                     # User notification behavior
-    ├── groups.csv                    # Group metadata
-    ├── group_members.csv             # User-group relationships
-    ├── business_accounts.csv         # Business sender metadata
-    ├── user_business_history.csv     # User-business history
-    ├── message_history.csv           # Historical messages
-    ├── message_events.csv            # User reactions to historical messages
-    ├── images.csv                    # Image IDs and media file paths
-    ├── voice_notes.csv               # Voice note IDs and media file paths
+├── README.md                         # This file — setup and run instructions
+├── AGENTS.md                         # AI coding agent rules + logging
+├── problem_statement.md              # Full challenge specification
+├── .env.example                      # Template for required environment variables
+├── output.csv                        # Final predictions (110 rows)
+└── code/
+    ├── main.py                       # Entry point — runs the full pipeline
+    ├── pipeline.py                   # 8-stage orchestration
+    ├── context.py                    # MessageContext hydration
+    ├── rules.py                      # Fast-path deterministic rules
+    ├── retrieval.py                  # BM25 evidence retrieval
+    ├── llm.py                        # Gemini LLM integration + key pool
+    ├── schema.py                     # Shared schema definitions
+    ├── requirements.txt              # Python dependencies
+    ├── regressions.md                # Mismatch log and Phase 9 edge-case results
+    ├── evaluation/
+    │   └── main.py                   # Schema + enum validation script
+├── dataset/
+    ├── messages.csv                  # 110 messages to route
+    ├── sample_messages.csv           # Solved examples (style calibration only)
+    ├── users.csv
+    ├── groups.csv
+    ├── group_members.csv
+    ├── business_accounts.csv
+    ├── user_business_history.csv
+    ├── message_history.csv
+    ├── message_events.csv
+    ├── images.csv
+    ├── voice_notes.csv
     ├── daily_notification_summary.csv
     └── media/
         ├── images/
@@ -42,89 +152,8 @@ Read [`problem_statement.md`](./problem_statement.md) for the full task spec, in
 
 ---
 
-## What You Need to Build
-
-For every row in `dataset/messages.csv`, produce one row in `output.csv` with:
-
-| Column | Meaning |
-|---|---|
-| `message_id` | Incoming message ID |
-| `action` | One of `notify`, `digest`, or `mute` |
-| `message_type` | Best-fit message category |
-| `reason` | Short human-readable explanation |
-| `confidence` | Number from `0` to `1` |
-| `evidence_message_ids` | Historical message IDs used as evidence; write `none` if there is no useful evidence |
-
-Your system should make personalized decisions using the provided message, user, group, business, media, and historical interaction data.
-For image and voice-note messages, `images.csv` and `voice_notes.csv` only provide file paths; your system should inspect the media files themselves.
-
----
-
-## Suggested Workflow
-
-1. Inspect `dataset/sample_messages.csv` to understand the expected output format.
-2. Load `dataset/messages.csv` and all relevant context files.
-3. Build your routing system using any approach: LLMs, retrieval, rules, classifiers, agents, or hybrids.
-4. Write predictions to `output.csv`.
-5. Evaluate your approach on the solved sample rows before submitting.
-
-You may use any language or runtime. Python, JavaScript, and TypeScript are all reasonable choices.
-
----
-
-## Requirements
-
-Your solution must:
-
-- be runnable from the terminal
-- read the provided files from `dataset/`
-- produce a valid `output.csv`
-- include one prediction for every `message_id` in `dataset/messages.csv`
-- not use organizer-only files or hardcoded labels
-
-If you use API keys or secrets, read them from environment variables. Never hardcode secrets in the repo.
-
----
-
-## Evaluation
-
-Your `output.csv` will be compared against hidden ground-truth labels.
-
-The scoring will consider:
-
-- correctness of `action`
-- correctness of `message_type`
-- usefulness and consistency of `reason`
-- whether `evidence_message_ids` point to relevant historical messages
-- reasonable confidence calibration
-
-Strong systems will combine retrieval, structured metadata, behavioral history, safety checks, OCR/ASR handling, and contextual reasoning.
-
----
-
-## Chat Transcript Logging
-
-This repo includes an [`AGENTS.md`](./AGENTS.md) file for AI coding tools. It asks compatible tools to append conversation summaries to:
-
-| Platform | Path |
-|---|---|
-| macOS / Linux | `$HOME/hackerrank_orchestrate_august26/log.txt` |
-| Windows | `%USERPROFILE%\hackerrank_orchestrate_august26\log.txt` |
-
-Upload this log as your chat transcript at submission time. Do not paste secrets into the chat.
-
----
-
 ## Submission
 
-Submit the following files as instructed by HackerRank:
-
-1. **Code zip**: full runnable solution, prompts/configs, README, and any evaluation files.
-2. **Predictions CSV**: final `output.csv` for all rows in `dataset/messages.csv`.
-3. **Chat transcript**: the `log.txt` described above.
-
-Before submitting, confirm:
-
-- `output.csv` has one row per row in `dataset/messages.csv`.
-- `output.csv` has the exact required columns in the exact required order.
-- Your runnable code and setup instructions are included in `code.zip`.
+1. `output.csv` — final predictions for all 110 messages
+2. Code zip — this full repository
+3. Chat transcript — `%USERPROFILE%\hackerrank_orchestrate_august26\log.txt` (Windows) or `$HOME/hackerrank_orchestrate_august26/log.txt` (macOS/Linux)

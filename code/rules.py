@@ -36,7 +36,9 @@ _SCAM_PATTERNS = [
         r"\b(?:confirm|verify)\b.*\bpassword\b",
         r"\baccount-login\.in\b",
         r"\bamazonpay-delivery\.in\b",
-        r"\bsecurity\s+(?:alert|check|patch)\b",
+        # 'security alert' must be accompanied by a phishing action to avoid
+        # false-positives on legitimate group notices (e.g. gate/repair alerts).
+        r"\bsecurity\s+(?:alert|check|patch)\b.{0,60}(?:OTP|verify|login|link|click|code|account)",
         r"\b(?:profile|account)\s+will\s+be\s+(?:block|restrict|suspend|delet)",
         r"\bclaim.{0,20}(?:voucher|reward|prize)",
         r"\b(?:voucher|reward|prize).{0,20}claim",
@@ -212,6 +214,24 @@ _SAFETY_ADVISORY_PATTERNS = [
         r"\bsafety\s+advisory\b",
         r"\bfraud\s+(?:alert|awareness|warning)\b",
         r"\bdo\s+not\s+share\s+(?:your\s+)?(?:OTP|password|PIN)\b",
+        r"\bno\s+(?:OTP|payment|pin|password).{0,15}required\b",
+        r"\bwill\s+never\s+(?:call|ask)\s+(?:you\s+)?for\b",
+    ]
+]
+
+# Personal conversational patterns (casual check-ins, questions)
+_PERSONAL_PATTERNS = [
+    re.compile(p, re.IGNORECASE)
+    for p in [
+        r"^how\s+are\s+you",
+        r"^where\s+are\s+you",
+        r"\bcall\s+me\b",
+        r"\bmiss\s+you\b",
+        r"\bwhat\s+(?:are|r)\s+(?:you|u)\s+doing",
+        r"\bhow\s+was\s+your\b",
+        r"\bcan\s+we\s+talk\b",
+        r"\bhappy\s+birthday\b",
+        r"^hey\s*(?:there|everyone|guys)?\s*$",
     ]
 ]
 
@@ -253,10 +273,19 @@ def _rule_scam_guard_text(ctx: MessageContext) -> Optional[dict]:
             # legitimate transactional message.  Let the LLM decide.
             return None
 
+        if re.search(r"\b(?:voucher|reward|prize)\b", text, re.IGNORECASE):
+            reason_text = "The message uses a fake reward, voucher, or prize claim to solicit engagement."
+        elif re.search(r"\b(?:payment|charge|fee|pay)\b", text, re.IGNORECASE):
+            reason_text = "The message creates artificial urgency around a fake payment, fee, or clearance issue."
+        elif re.search(r"\b(?:block|restrict|suspend|delet)\b", text, re.IGNORECASE):
+            reason_text = "The message threatens to block or restrict an account to force urgent action."
+        else:
+            reason_text = "The message asks for urgent OTP or account verification through a suspicious flow."
+
         return _make_decision(
             action="mute",
             message_type="scam",
-            reason="The message asks for urgent OTP or account verification through a suspicious flow.",
+            reason=reason_text,
             confidence=confidence,
         )
     return None
@@ -307,6 +336,24 @@ def _rule_muted_group(ctx: MessageContext) -> Optional[dict]:
                 message_type="promotion",
                 reason="Similar historical messages were ignored, dismissed, or muted by this user.",
                 confidence=0.85,
+            )
+
+        # Forwarded content in muted group.
+        if ctx.forwarded_count > 0 or _text_matches_any(text, _CHAIN_FORWARD_PATTERNS):
+            return _make_decision(
+                action="mute",
+                message_type="forward",
+                reason="The user has muted this group and the message is a forwarded chain or broadcast.",
+                confidence=0.83,
+            )
+            
+        # Personal chat content in muted group.
+        if _text_matches_any(text, _PERSONAL_PATTERNS):
+            return _make_decision(
+                action="mute",
+                message_type="personal",
+                reason="The user has muted this group and the casual chat does not contain a direct mention.",
+                confidence=0.83,
             )
 
         return _make_decision(
