@@ -31,12 +31,14 @@ cp .env.example .env
 Open `.env` and set:
 
 ```
-GEMINI_API_KEY_1=your_key_here
+# Option A — single key (simplest):
+GEMINI_API_KEY=your_key_here
+
+# Option B — multiple keys for automatic rotation on quota hit:
+GEMINI_API_KEYS=key_one,key_two,key_three
 ```
 
-You may add up to 3 keys (`GEMINI_API_KEY_1`, `GEMINI_API_KEY_2`, `GEMINI_API_KEY_3`) for automatic key rotation when a quota limit is hit.
-
-> **Required env vars:** `GEMINI_API_KEY_1` (mandatory). `GEMINI_API_KEY_2` and `GEMINI_API_KEY_3` are optional but recommended to avoid RPD quota limits.
+> **Required:** either `GEMINI_API_KEY` (single) or `GEMINI_API_KEYS` (comma-separated list). The code checks `GEMINI_API_KEYS` first, then falls back to `GEMINI_API_KEY`.
 
 ### 3. Run the pipeline
 
@@ -76,9 +78,8 @@ The system runs 8 stages per message:
 
 | Variable | Required | Description |
 |---|---|---|
-| `GEMINI_API_KEY_1` | ✅ Yes | Primary Gemini API key |
-| `GEMINI_API_KEY_2` | Optional | Second key for automatic rotation on quota hit |
-| `GEMINI_API_KEY_3` | Optional | Third key for automatic rotation on quota hit |
+| `GEMINI_API_KEY` | ✅ Yes (if not using `GEMINI_API_KEYS`) | Single Gemini API key |
+| `GEMINI_API_KEYS` | ✅ Yes (if not using `GEMINI_API_KEY`) | Comma-separated list of keys; rotated automatically on quota hit |
 
 Keys are loaded from `.env` in the project root. Never commit `.env` to git (it is already in `.gitignore`).
 

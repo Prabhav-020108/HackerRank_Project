@@ -324,6 +324,12 @@ def process_message(msg_row: pd.Series, data_dir: Path) -> dict:
     # ── Stage 1: Ingest — hydrate context ────────────────────────────────────
     ctx = ctx_module.hydrate(msg_row, data_dir)
 
+    # ── Stage 3: Retrieval — BM25 evidence (runs for ALL messages) ───────────
+    # Must run before the fast-path branch so that even rule-decided rows
+    # get real evidence IDs in their output row.
+    query_text = ctx.message_text or ""
+    evidence_str, evidence_context = retrieve_evidence(ctx.user_id, query_text)
+
     # ── Stage 2: Fast-path rules ──────────────────────────────────────────────
     fast_path_result = fast_path(ctx)
 
@@ -332,18 +338,14 @@ def process_message(msg_row: pd.Series, data_dir: Path) -> dict:
     fast_path_type = fast_path_result.get("message_type") if fast_path_fired else None
 
     if fast_path_fired:
-        # Fast-path hit — skip retrieval and LLM.
+        # Fast-path hit — skip LLM but use the already-retrieved evidence.
         # Still run finalize (may catch scam signals the fast-path missed)
         # and always validate.
         draft = dict(fast_path_result)
-        draft.setdefault("evidence_message_ids", "none")
-        evidence_str = draft["evidence_message_ids"]
+        # Use real BM25 evidence; only fall back to "none" if retrieval found nothing.
+        draft["evidence_message_ids"] = evidence_str
 
     else:
-        # ── Stage 3: Retrieval — BM25 evidence ───────────────────────────────
-        query_text = ctx.message_text or ""
-        evidence_str, evidence_context = retrieve_evidence(ctx.user_id, query_text)
-
         # ── Stage 4: Signal extraction (already in ctx + evidence_context) ───
         # ctx carries: DND flag, notification load, media ref, group/biz info.
         # evidence_context carries human-readable historical evidence strings.
