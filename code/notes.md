@@ -34,3 +34,9 @@
 *   **Conversation Type Split**: 63 group, 30 business, 17 personal.
 *   **Media Split**: 87 text-only, 15 image, 8 voice.
 *   **All 110 rows hydrate without errors across all conversation types.**
+
+## Phase 4 — Fast-Path Rules Notes
+*   **Quiet-Hours Behavior (DND) Decision:** We intentionally do NOT auto-mute or auto-digest messages purely based on DND hours in the fast-path. Rationale: A genuinely urgent message (e.g., medical emergency, work outage) arriving during quiet hours should still be processed by the LLM so it can assess urgency and potentially notify the user. The `is_during_dnd` flag is passed to the LLM to factor into its confidence/action decision, rather than silently dropping potentially critical messages deterministically.
+*   **Scam Guard:** Correctly overrides engagement history. Tested and verified on `sample_msg_043`.
+*   **Mute Guard:** Correctly mutes group messages, but lets direct @-mentions through. Verified on `msg_056`.
+*   **Ambiguous Rows:** 67/110 messages (60.9%) fell through the fast-path to the slow LLM path.
