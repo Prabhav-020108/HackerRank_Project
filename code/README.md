@@ -131,6 +131,8 @@ Expected output: `VALID: 110 rows, schema OK, all enums valid, confidence in ran
     ├── schema.py                     # Shared schema definitions
     ├── requirements.txt              # Python dependencies
     ├── regressions.md                # Mismatch log and Phase 9 edge-case results
+    ├── README.md                     # This file (copied for code/ submission zip)
+    ├── .env.example                  # Template (copied for code/ submission zip)
     ├── evaluation/
     │   └── main.py                   # Schema + enum validation script
 ├── dataset/
